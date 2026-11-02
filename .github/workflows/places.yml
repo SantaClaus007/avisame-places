@@ -1,0 +1,46 @@
+# Loads places for the squares Avísame users stopped in, from Overture Maps. Every 15 minutes; a first
+# step asks whether any square is waiting and the job ends there when none is. This repository is
+# public for its free GitHub minutes: the logs say totals only. Secrets: FUNCTIONS_URL, CRON_SECRET.
+name: places
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: places
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Anything waiting?
+        id: peek
+        env:
+          FUNCTIONS_URL: ${{ secrets.FUNCTIONS_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          n=$(curl -s -X POST "$FUNCTIONS_URL/load-places" -H 'Content-Type: application/json' -H "x-cron-secret: $CRON_SECRET" -d '{"action":"peek"}' | jq -r '.waiting // 0')
+          echo "waiting=$n" >> "$GITHUB_OUTPUT"; echo "squares waiting: $n"
+      - if: steps.peek.outputs.waiting != '0'
+        uses: actions/checkout@v4
+      - if: steps.peek.outputs.waiting != '0'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: DuckDB
+        if: steps.peek.outputs.waiting != '0'
+        run: npm install --silent --no-save @duckdb/node-api@1.1.3-alpha.7
+      - name: Load waiting squares
+        if: steps.peek.outputs.waiting != '0'
+        env:
+          FUNCTIONS_URL: ${{ secrets.FUNCTIONS_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PLACES_PER_RUN: '30'
+        run: node load.mjs
